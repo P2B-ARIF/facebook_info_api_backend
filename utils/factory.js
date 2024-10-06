@@ -1,29 +1,43 @@
 const path = require("path");
 const fs = require("fs");
 const { default: axios } = require("axios");
+const { connectToDatabase } = require("./db");
 
 // Function to read and parse the JSON file
 async function getGirlsNames() {
-	const filePath = path.join(__dirname, "./../girls_names.json");
 	try {
-		const data = fs.readFileSync(filePath, "utf-8"); // Read the JSON file
-		const girlsNames = JSON.parse(data); // Parse the JSON string into an object
-		return girlsNames;
+		// Connect to the database
+		const db = await connectToDatabase();
+		const girlsCollection = db.collection("girls");
+
+		// Aggregate query to get one random document
+		const randomDocs = await girlsCollection
+			.aggregate([{ $sample: { size: 1 } }, { $project: { _id: 0 } }])
+			.toArray();
+
+		// Check if a document was found
+		if (randomDocs.length > 0) {
+			return randomDocs[0]; // Return the first random document
+		} else {
+			// No documents were found
+			return { message: "No girls found in the collection." };
+		}
 	} catch (error) {
-		console.error("Error reading the file:", error);
-		return [];
+		// Log any errors and return a default message
+		console.error("Error fetching random girl's name:", error);
+		return { error: "Something went wrong fetching the name." };
 	}
 }
 
-// Example usage: Get the random name from the JSON file
-async function getRandomName() {
-	const girlsNames = await getGirlsNames();
-	if (girlsNames.length > 0) {
-		const randomIndex = Math.floor(Math.random() * girlsNames.length);
-		return girlsNames[randomIndex];
-	}
-	return null;
-}
+// // Example usage: Get the random name from the JSON file
+// async function getRandomName() {
+// 	const girlsNames = await getGirlsNames();
+// 	if (girlsNames.length > 0) {
+// 		const randomIndex = Math.floor(Math.random() * girlsNames.length);
+// 		return girlsNames[randomIndex];
+// 	}
+// 	return null;
+// }
 
 // get random robi number
 async function generatePhoneNumber() {
@@ -67,7 +81,8 @@ async function fetchInbox(email) {
 
 module.exports = {
 	generatePhoneNumber,
-	getRandomName,
+	// getRandomName,
+	getGirlsNames,
 	getTempEmail,
 	get2FACode,
 	fetchInbox,
