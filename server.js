@@ -14,6 +14,9 @@ const {
 const { connectToDatabase } = require("./utils/db");
 const { startCleanupJob } = require("./utils/guarduser");
 const fns = require("date-fns");
+const fs = require("fs");
+const xlsx = require("xlsx");
+const { Readable } = require("stream");
 
 dotenv.config(); // Load environment variables
 
@@ -69,7 +72,20 @@ app.get("/", (req, res) => {
 
 // Verify User Route
 app.get("/user_verify", authenticateToken, async (req, res) => {
-	res.status(200).json({ access: true });
+	const { email } = req.user;
+
+	try {
+		const db = await connectToDatabase();
+		const usersCollection = db.collection("users");
+		const user = await usersCollection.findOne({ email });
+		if (user.membership) {
+			return res.json({ membership: user.membership });
+		} else {
+			return res.json({ membership: false, message: "Not a member" });
+		}
+	} catch (err) {
+		res.status(500).json(err.message);
+	}
 });
 
 // Get 2FA Code Route
@@ -155,6 +171,11 @@ app.put("/auth/login", async (req, res) => {
 					"Access denied: same email login on multiple devices not allowed",
 			});
 		}
+		if (user && !user.membership) {
+			return res
+				.status(200)
+				.json({ membership: false, message: "Membership expired.." });
+		}
 
 		const token = jwt.sign(
 			{ userId: user._id, email: user.email },
@@ -166,6 +187,87 @@ app.put("/auth/login", async (req, res) => {
 		res.status(200).json({ access: true, message: "Login successful", token });
 	} catch (error) {
 		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// approved
+app.put("/api/approved/:date", async (req, res) => {
+	const { date } = req.params;
+	const emails = req.body; // Expecting an array of emails
+	const finder = fns.format(new Date(date), "MM/dd/yyyy");
+
+	try {
+		const db = await connectToDatabase();
+		const yearMonth = fns.format(new Date(), "yyyyMM");
+		const fbBulkCollection = db.collection(yearMonth);
+
+		// Update the approved field for the specified emails
+		const result = await fbBulkCollection.updateMany(
+			{
+				date: finder,
+				"bulkId.mail": { $in: emails }, // Match documents containing bulkId with specified emails
+			},
+			{
+				$set: {
+					"bulkId.$[mailElement].approved": true, // Set approved to true for matched elements
+				},
+			},
+			{
+				arrayFilters: [{ "mailElement.mail": { $in: emails } }], // Specify array filter to match the email in bulkId
+			},
+		);
+
+		// Return the count of modified documents
+		res.status(200).send({ modifiedCount: result.modifiedCount });
+	} catch (err) {
+		console.error("Error updating approved status:", err);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// excel file download
+app.get("/api/download/:date", async (req, res) => {
+	const { date } = req.params;
+	const finder = fns.format(new Date(date), "MM/dd/yyyy");
+
+	try {
+		const db = await connectToDatabase();
+		const yearMonth = fns.format(new Date(), "yyyyMM");
+		const fbBulkCollection = db.collection(yearMonth);
+
+		const data = await fbBulkCollection
+			.aggregate([{ $match: { date: finder } }, { $unwind: "$bulkId" }])
+			.toArray();
+
+		const excelData = data.map(entry => ({
+			Email: entry.bulkId.userEmail || "",
+			UID: entry.bulkId.uid || "",
+			Password: entry.bulkId.pass || "",
+			TwoFA: entry.bulkId.twoFA || "",
+		}));
+
+		const workbook = xlsx.utils.book_new();
+		const worksheet = xlsx.utils.json_to_sheet(excelData);
+		xlsx.utils.book_append_sheet(workbook, worksheet, "Data");
+
+		const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+		const stream = new Readable();
+		stream.push(buffer);
+		stream.push(null);
+
+		res.setHeader(
+			"Content-Disposition",
+			`attachment; filename="today_data_${date.replace(/\//g, "_")}.xlsx"`,
+		);
+		res.setHeader(
+			"Content-Type",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		);
+
+		stream.pipe(res);
+	} catch (error) {
+		console.error("Error generating Excel file:", error);
+		res.status(500).send({ message: "Error generating Excel file." });
 	}
 });
 
@@ -217,6 +319,7 @@ app.post("/add-user", async (req, res) => {
 			hashedPassword,
 			createdAt: new Date(),
 			access: true,
+			membership: true,
 		};
 
 		const result = await usersCollection.insertOne(newUser);
@@ -228,7 +331,7 @@ app.post("/add-user", async (req, res) => {
 	}
 });
 
-app.get("/api/today",authenticateToken,  async (req, res) => {
+app.get("/api/today", authenticateToken, async (req, res) => {
 	try {
 		const { email } = req.user;
 		const db = await connectToDatabase();
@@ -248,7 +351,7 @@ app.get("/api/today",authenticateToken,  async (req, res) => {
 			])
 			.toArray();
 
-		res.status(200).send({today: result.length});
+		res.status(200).send({ today: result.length });
 	} catch (err) {
 		res.status(500).send({ message: err.message });
 	}
