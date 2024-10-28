@@ -48,7 +48,8 @@ async function generatePhoneNumber() {
 
 // Function to generate random email
 async function getTempEmail() {
-	const randomString = Math.random().toString(36).substring(7); // Generate random string
+	// const randomString = Math.random().toString(36).substring(7); // Generate random string
+	const randomString = Math.random().toString(36).substring(2, 12);
 	const email = `${randomString}@1secmail.com`;
 	return email;
 }

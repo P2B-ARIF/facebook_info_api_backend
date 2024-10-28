@@ -13,6 +13,7 @@ const {
 } = require("./utils/factory");
 const { connectToDatabase } = require("./utils/db");
 const { startCleanupJob } = require("./utils/guarduser");
+const fns = require("date-fns");
 
 dotenv.config(); // Load environment variables
 
@@ -86,10 +87,12 @@ app.get("/get_2fa_code", authenticateToken, async (req, res) => {
 app.get("/check_inbox", authenticateToken, async (req, res) => {
 	try {
 		const { email } = req.query;
+
+		// console.log(email, "email");
 		const inbox = await fetchInbox(email);
 		if (!inbox || inbox.length === 0) {
 			return res
-				.status(404)
+				.status(255)
 				.json({ access: true, message: "No emails found." });
 		}
 		res.json(inbox);
@@ -146,13 +149,11 @@ app.put("/auth/login", async (req, res) => {
 			return res.status(401).json({ message: "Invalid credentials" });
 		}
 		if (!user.access) {
-			return res
-				.status(403)
-				.json({
-					access: false,
-					message:
-						"Access denied: same email login on multiple devices not allowed",
-				});
+			return res.status(403).json({
+				access: false,
+				message:
+					"Access denied: same email login on multiple devices not allowed",
+			});
 		}
 
 		const token = jwt.sign(
@@ -222,6 +223,244 @@ app.post("/add-user", async (req, res) => {
 		res
 			.status(201)
 			.json({ message: "User added successfully", userId: result.insertedId });
+	} catch (error) {
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+app.get("/api/today",authenticateToken,  async (req, res) => {
+	try {
+		const { email } = req.user;
+		const db = await connectToDatabase();
+		const currentDate = new Date();
+
+		// const email = "arif3@gmail.com";
+		const yearMonth = fns.format(currentDate, "yyyyMM");
+		const fbBulkCollection = db.collection(yearMonth);
+
+		const formattedDate = fns.format(currentDate, "MM/dd/yyyy");
+
+		const result = await fbBulkCollection
+			.aggregate([
+				{ $match: { date: formattedDate } },
+				{ $unwind: "$bulkId" },
+				{ $match: { "bulkId.userEmail": email } },
+			])
+			.toArray();
+
+		res.status(200).send({today: result.length});
+	} catch (err) {
+		res.status(500).send({ message: err.message });
+	}
+});
+
+// History and Report Table
+app.get("/api/table", authenticateToken, async (req, res) => {
+	try {
+		const { email } = req.user;
+		const db = await connectToDatabase();
+		const currentDate = new Date();
+		const startDate = new Date();
+		startDate.setDate(currentDate.getDate() - 4); // Last 3 days
+
+		const yearMonth = fns.format(currentDate, "yyyyMM");
+		const fbBulkCollection = db.collection(yearMonth);
+
+		// Aggregation for all data (total counts)
+		const allData = await fbBulkCollection
+			.aggregate([
+				{
+					$match: {
+						date: {
+							$gte: fns.format(startDate, "MM/dd/yyyy"),
+							$lte: fns.format(currentDate, "MM/dd/yyyy"),
+						},
+						"bulkId.userEmail": email,
+					},
+				},
+				{ $unwind: "$bulkId" },
+				{
+					$match: {
+						"bulkId.userEmail": email,
+					},
+				},
+				{
+					$group: {
+						_id: { date: "$date", mode: "$bulkId.mode" },
+						count: { $sum: 1 },
+					},
+				},
+				{
+					$group: {
+						_id: "$_id.date",
+						modes: {
+							$push: {
+								mode: "$_id.mode",
+								count: "$count",
+							},
+						},
+					},
+				},
+				{
+					$project: {
+						date: "$_id",
+						modes: 1,
+						_id: 0,
+					},
+				},
+			])
+			.toArray();
+
+		// Aggregation for approved data
+		const approvedData = await fbBulkCollection
+			.aggregate([
+				{
+					$match: {
+						date: {
+							$gte: fns.format(startDate, "MM/dd/yyyy"),
+							$lte: fns.format(currentDate, "MM/dd/yyyy"),
+						},
+						"bulkId.userEmail": email,
+					},
+				},
+				{ $unwind: "$bulkId" },
+				{
+					$match: {
+						"bulkId.userEmail": email,
+						"bulkId.approved": true,
+					},
+				},
+				{
+					$group: {
+						_id: { date: "$date", mode: "$bulkId.mode" },
+						count: { $sum: 1 },
+					},
+				},
+				{
+					$group: {
+						_id: "$_id.date",
+						modes: {
+							$push: {
+								mode: "$_id.mode",
+								count: "$count",
+							},
+						},
+					},
+				},
+				{
+					$project: {
+						date: "$_id",
+						modes: 1,
+						_id: 0,
+					},
+				},
+			])
+			.toArray();
+
+		// Combining both datasets into a single result
+		const combinedResults = allData.map(item => {
+			const approvedItem = approvedData.find(
+				data => data.date === item.date,
+			) || { modes: [] };
+			const completeCount =
+				item.modes.find(m => m.mode === "complete")?.count || 0;
+			const quickCount = item.modes.find(m => m.mode === "quick")?.count || 0;
+			const approvedCompleteCount =
+				approvedItem.modes.find(m => m.mode === "complete")?.count || 0;
+			const approvedQuickCount =
+				approvedItem.modes.find(m => m.mode === "quick")?.count || 0;
+
+			return {
+				date: item.date,
+				complete: completeCount,
+				quick: quickCount,
+				approvedComplete: approvedCompleteCount,
+				approvedQuick: approvedQuickCount,
+			};
+		});
+
+		// Include any dates present in approvedData but missing in allData
+		const allDates = new Set(combinedResults.map(item => item.date));
+		approvedData.forEach(approvedItem => {
+			if (!allDates.has(approvedItem.date)) {
+				const approvedCompleteCount =
+					approvedItem.modes.find(m => m.mode === "complete")?.count || 0;
+				const approvedQuickCount =
+					approvedItem.modes.find(m => m.mode === "quick")?.count || 0;
+
+				combinedResults.push({
+					date: approvedItem.date,
+					complete: 0,
+					quick: 0,
+					approvedComplete: approvedCompleteCount,
+					approvedQuick: approvedQuickCount,
+				});
+			}
+		});
+
+		// Sort results by date
+		combinedResults.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+		res.status(200).json(combinedResults);
+	} catch (error) {
+		console.error(error);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+// Mail Complete Route
+app.put("/mail/complete", authenticateToken, async (req, res) => {
+	try {
+		const body = req.body;
+		const { mail, pass, uid, twoFA, mode } = body;
+		const user = req.user;
+
+		// console.log(body, "user");
+
+		if (!mail || !pass || !uid || !twoFA) {
+			return res.status(400).json({ message: "Full Data are required" });
+		}
+
+		const date = fns.format(new Date(), "MM/dd/yyyy");
+		const yearMonth = fns.format(new Date(), "yyyyMM");
+
+		const db = await connectToDatabase();
+		const fbBulkCollection = db.collection(yearMonth);
+
+		const find = await fbBulkCollection.findOne({ date: date });
+		if (find) {
+			const result = await fbBulkCollection.updateOne(
+				{ date: date },
+				{
+					$push: {
+						bulkId: {
+							...body,
+							gender: "female",
+							country: "BD",
+							userEmail: user.email,
+							createdAt: new Date(),
+						},
+					},
+				},
+			);
+
+			return res.status(200).json(result);
+		} else {
+			const result = await fbBulkCollection.insertOne({
+				date: date,
+				bulkId: [
+					{
+						...body,
+						gender: "female",
+						country: "BD",
+						userEmail: user.email,
+						createdAt: new Date(),
+					},
+				],
+			});
+
+			return res.status(201).json(result);
+		}
 	} catch (error) {
 		res.status(500).json({ message: "Server error" });
 	}
