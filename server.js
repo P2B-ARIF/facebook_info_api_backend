@@ -240,10 +240,11 @@ app.get("/api/download/:date", async (req, res) => {
 			.toArray();
 
 		const excelData = data.map(entry => ({
-			Email: entry.bulkId.userEmail || "",
+			Email: entry.bulkId.mail || "",
 			UID: entry.bulkId.uid || "",
 			Password: entry.bulkId.pass || "",
 			TwoFA: entry.bulkId.twoFA || "",
+			UserEmail: entry.bulkId.userEmail || "",
 		}));
 
 		const workbook = xlsx.utils.book_new();
