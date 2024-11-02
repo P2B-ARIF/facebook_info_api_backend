@@ -32,7 +32,7 @@ app.use(cors());
 // Rate limiter (60 requests per minute)
 const limiter = rateLimit({
 	windowMs: 60 * 1000,
-	max: 60,
+	max: 30,
 	message: {
 		status: 429,
 		error: "Too many requests, please try again after a minute.",
@@ -79,12 +79,16 @@ app.get("/user_verify", authenticateToken, async (req, res) => {
 		const usersCollection = db.collection("users");
 		const user = await usersCollection.findOne({ email });
 		if (user.membership) {
-			return res.json({ membership: user.membership });
+			return res.status(200).json({ membership: user.membership });
 		} else {
-			return res.json({ membership: false, message: "Not a member" });
+			return res.status(200).json({
+				membership: false,
+				message:
+					"Your membership has expired. Please renew to continue enjoying full access.",
+			});
 		}
 	} catch (err) {
-		res.status(500).json(err.message);
+		res.status(500).json({ access: false, message: err.message });
 	}
 });
 
@@ -154,7 +158,7 @@ app.put("/auth/login", async (req, res) => {
 		const { email, password } = req.body;
 		if (!email || !password) {
 			return res
-				.status(400)
+				.status(401)
 				.json({ message: "Email and password are required" });
 		}
 		const db = await connectToDatabase();
@@ -191,29 +195,28 @@ app.put("/auth/login", async (req, res) => {
 });
 
 // approved
-app.put("/api/approved/:date", async (req, res) => {
-	const { date } = req.params;
+app.put("/api/approved/:yearMonth/:date", async (req, res) => {
+	const { date, yearMonth } = req.params;
+
 	const emails = req.body; // Expecting an array of emails
-	const finder = fns.format(new Date(date), "MM/dd/yyyy");
+	const formattedDate = fns.format(new Date(date), "MM/dd/yyyy");
 
 	try {
 		const db = await connectToDatabase();
-		const yearMonth = fns.format(new Date(), "yyyyMM");
+		// const yearMonth = fns.format(new Date(), "yyyyMM");
 		const fbBulkCollection = db.collection(yearMonth);
 
 		// Update the approved field for the specified emails
 		const result = await fbBulkCollection.updateMany(
 			{
-				date: finder,
+				date: formattedDate,
 				"bulkId.mail": { $in: emails }, // Match documents containing bulkId with specified emails
 			},
 			{
-				$set: {
-					"bulkId.$[mailElement].approved": true, // Set approved to true for matched elements
-				},
+				$set: { "bulkId.$[mailElement].approved": true }, // Set approved to true for matched elements
 			},
 			{
-				arrayFilters: [{ "mailElement.mail": { $in: emails } }], // Specify array filter to match the email in bulkId
+				arrayFilters: [{ "mailElement.mail": { $in: emails } }], // Filter elements within bulkId array
 			},
 		);
 
@@ -226,13 +229,14 @@ app.put("/api/approved/:date", async (req, res) => {
 });
 
 // excel file download
-app.get("/api/download/:date", async (req, res) => {
-	const { date } = req.params;
+app.get("/api/download/:yearMonth/:date", async (req, res) => {
+	const { date, yearMonth } = req.params;
+
 	const finder = fns.format(new Date(date), "MM/dd/yyyy");
 
 	try {
 		const db = await connectToDatabase();
-		const yearMonth = fns.format(new Date(), "yyyyMM");
+		// const yearMonth = fns.format(new Date(), "yyyyMM");
 		const fbBulkCollection = db.collection(yearMonth);
 
 		const data = await fbBulkCollection
@@ -531,8 +535,24 @@ app.put("/mail/complete", authenticateToken, async (req, res) => {
 		const db = await connectToDatabase();
 		const fbBulkCollection = db.collection(yearMonth);
 
-		const find = await fbBulkCollection.findOne({ date: date });
-		if (find) {
+		// Check if `twoFA` or `mail` already exists for the given `date`
+		const existingEntry = await fbBulkCollection.findOne({
+			date: date,
+			bulkId: {
+				$elemMatch: {
+					$or: [{ twoFA: twoFA }, { mail: mail }],
+				},
+			},
+		});
+
+		if (existingEntry) {
+			return res.status(409).json({
+				message: "Either twoFA or mail already exists for this date",
+			});
+		}
+
+		const documentForDate = await fbBulkCollection.findOne({ date: date });
+		if (documentForDate) {
 			const result = await fbBulkCollection.updateOne(
 				{ date: date },
 				{
