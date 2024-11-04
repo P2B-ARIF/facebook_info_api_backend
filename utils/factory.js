@@ -54,6 +54,9 @@ async function getTempEmail() {
 	return email;
 }
 
+
+
+
 // Function to get a 2FA code from 2fa.live
 async function get2FACode(secret) {
 	try {
@@ -66,19 +69,19 @@ async function get2FACode(secret) {
 	}
 }
 
-// Function to retrieve emails from 1secmail.com API
-async function fetchInbox(email) {
-	const [username, domain] = email.split("@");
-	const url = `https://www.1secmail.com/api/v1/?action=getMessages&login=${username}&domain=1secmail.com`;
+// // Function to retrieve emails from 1secmail.com API
+// async function fetchInbox(email) {
+// 	const [username, domain] = email.split("@");
+// 	const url = `https://www.1secmail.com/api/v1/?action=getMessages&login=${username}&domain=1secmail.com`;
 
-	try {
-		const response = await axios.get(url);
-		return response.data;
-	} catch (error) {
-		console.error("Error fetching inbox:", error);
-		return null;
-	}
-}
+// 	try {
+// 		const response = await axios.get(url);
+// 		return response.data;
+// 	} catch (error) {
+// 		console.error("Error fetching inbox:", error);
+// 		return null;
+// 	}
+// }
 
 module.exports = {
 	generatePhoneNumber,
@@ -86,5 +89,5 @@ module.exports = {
 	getGirlsNames,
 	getTempEmail,
 	get2FACode,
-	fetchInbox,
+	// fetchInbox,
 };

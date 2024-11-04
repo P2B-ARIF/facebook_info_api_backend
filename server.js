@@ -103,23 +103,23 @@ app.get("/get_2fa_code", authenticateToken, async (req, res) => {
 	}
 });
 
-// Check Inbox Route
-app.get("/check_inbox", authenticateToken, async (req, res) => {
-	try {
-		const { email } = req.query;
+// // Check Inbox Route
+// app.get("/check_inbox", authenticateToken, async (req, res) => {
+// 	try {
+// 		const { email } = req.query;
 
-		// console.log(email, "email");
-		const inbox = await fetchInbox(email);
-		if (!inbox || inbox.length === 0) {
-			return res
-				.status(255)
-				.json({ access: true, message: "No emails found." });
-		}
-		res.json(inbox);
-	} catch (err) {
-		res.status(500).json({ access: false, message: "Something went wrong!" });
-	}
-});
+// 		// console.log(email, "email");
+// 		const inbox = await fetchInbox(email);
+// 		if (!inbox || inbox.length === 0) {
+// 			return res
+// 				.status(255)
+// 				.json({ access: true, message: "No emails found." });
+// 		}
+// 		res.json(inbox);
+// 	} catch (err) {
+// 		res.status(500).json({ access: false, message: "Something went wrong!" });
+// 	}
+// });
 
 // Get Random Details Route
 app.get("/get_details", authenticateToken, async (req, res) => {
