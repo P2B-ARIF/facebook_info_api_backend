@@ -5,18 +5,15 @@ const removeExpiredIPs = async () => {
 
 	try {
 		const db = await connectToDatabase();
-		const usersCollection = db.collection("users");
-		
+		const usersCollection = await db.collection("users");
+
 		// Update documents where `createdAt` is older than 30 days to set `membership` to false
 		const result = await usersCollection.updateMany(
 			{ createdAt: { $lt: thirtyDaysAgo } },
-			{ $set: { membership: false } }
+			{ $set: { membership: false } },
 		);
-		
-	
-		console.log(
-			`Updated ${result.modifiedCount} records.`
-		);
+
+		console.log(`Updated ${result.modifiedCount} records.`);
 	} catch (error) {
 		console.error("Error cleaning up expired IPs:", error);
 	}
