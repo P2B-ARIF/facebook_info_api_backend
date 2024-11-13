@@ -74,7 +74,7 @@ app.get("/user_verify", authenticateToken, async (req, res) => {
 
 	try {
 		const db = await connectToDatabase();
-		const usersCollection = db.collection("users");
+		const usersCollection = await db.collection("users");
 		const user = await usersCollection.findOne({ email });
 		if (user.membership) {
 			return res.status(200).json({ membership: user.membership });
@@ -142,7 +142,7 @@ app.put("/auth/login", async (req, res) => {
 				.json({ message: "Email and password are required" });
 		}
 		const db = await connectToDatabase();
-		const usersCollection = db.collection("users");
+		const usersCollection = await db.collection("users");
 
 		const user = await usersCollection.findOne({ email });
 		if (!user || !(await bcrypt.compare(password, user.hashedPassword))) {
@@ -184,7 +184,7 @@ app.put("/api/approved/:yearMonth/:date", async (req, res) => {
 	try {
 		const db = await connectToDatabase();
 		// const yearMonth = fns.format(new Date(), "yyyyMM");
-		const fbBulkCollection = db.collection(yearMonth);
+		const fbBulkCollection = await db.collection(yearMonth);
 
 		// Update the approved field for the specified emails
 		const result = await fbBulkCollection.updateMany(
@@ -217,7 +217,7 @@ app.get("/api/download/:yearMonth/:date", async (req, res) => {
 	try {
 		const db = await connectToDatabase();
 		// const yearMonth = fns.format(new Date(), "yyyyMM");
-		const fbBulkCollection = db.collection(yearMonth);
+		const fbBulkCollection = await db.collection(yearMonth);
 
 		const data = await fbBulkCollection
 			.aggregate([{ $match: { date: finder } }, { $unwind: "$bulkId" }])
@@ -264,7 +264,7 @@ app.put("/block-user", async (req, res) => {
 			return res.status(400).json({ message: "Email is required" });
 		}
 		const db = await connectToDatabase();
-		const usersCollection = db.collection("users");
+		const usersCollection = await db.collection("users");
 
 		const user = await usersCollection.findOne({ email });
 		if (!user) {
@@ -324,7 +324,7 @@ app.get("/api/today", authenticateToken, async (req, res) => {
 
 		// const email = "arif3@gmail.com";
 		const yearMonth = fns.format(currentDate, "yyyyMM");
-		const fbBulkCollection = db.collection(yearMonth);
+		const fbBulkCollection = await db.collection(yearMonth);
 
 		const formattedDate = fns.format(currentDate, "MM/dd/yyyy");
 
@@ -352,7 +352,7 @@ app.get("/api/table", authenticateToken, async (req, res) => {
 		startDate.setDate(currentDate.getDate() - 4); // Last 3 days
 
 		const yearMonth = fns.format(currentDate, "yyyyMM");
-		const fbBulkCollection = db.collection(yearMonth);
+		const fbBulkCollection = await db.collection(yearMonth);
 
 		// Aggregation for all data (total counts)
 		const allData = await fbBulkCollection
@@ -513,7 +513,7 @@ app.put("/mail/complete", authenticateToken, async (req, res) => {
 		const yearMonth = fns.format(new Date(), "yyyyMM");
 
 		const db = await connectToDatabase();
-		const fbBulkCollection = db.collection(yearMonth);
+		const fbBulkCollection = await db.collection(yearMonth);
 
 		// Check if `twoFA` or `mail` already exists for the given `date`
 		const existingEntry = await fbBulkCollection.findOne({
