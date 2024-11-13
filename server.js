@@ -310,7 +310,10 @@ app.post("/add-user", async (req, res) => {
 		const result = await usersCollection.insertOne(newUser);
 		res
 			.status(201)
-			.json({ message: "User added successfully", userId: result.insertedId });
+			.json({
+				message: "User added successfully",
+				userId: { result: result.insertedId, email, password },
+			});
 	} catch (error) {
 		res.status(500).json({ message: "Server error" });
 	}
