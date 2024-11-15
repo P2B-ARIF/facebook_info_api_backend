@@ -26,7 +26,7 @@ const startCleanupJob = () => {
 	// Run the cleanup job every 60 seconds (1 minute)
 	setInterval(() => {
 		removeExpiredIPs();
-	}, 60 * 1000); // 60 seconds * 1000 milliseconds
+	}, 300 * 1000); // 60 seconds * 1000 milliseconds
 };
 
 // Export the cleanup job function
