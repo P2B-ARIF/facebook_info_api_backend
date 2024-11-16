@@ -29,7 +29,7 @@ app.use(cors());
 
 // Rate limiter (60 requests per minute)
 const limiter = rateLimit({
-	windowMs: 2 * 1000,
+	windowMs: 5 * 1000,
 	max: 100,
 	message: {
 		status: 429,
@@ -361,7 +361,17 @@ app.get("/api/today", authenticateToken, async (req, res) => {
 			])
 			.toArray();
 
-		res.status(200).send({ today: result.length });
+		const instagramCollection = await db.collection("instagram");
+		const date = fns.format(new Date(), "MM/dd/yyyy");
+		const instaResult = await instagramCollection
+			.find({
+				$and: [{ userEmail: email }, { "createdAt.date_fns": { $eq: date } }],
+			})
+			.toArray();
+
+		res
+			.status(200)
+			.send({ facebook: result.length, instagram: instaResult.length });
 	} catch (err) {
 		res.status(500).send({ message: err.message });
 	}
@@ -374,7 +384,7 @@ app.get("/api/table", authenticateToken, async (req, res) => {
 		const db = await connectToDatabase();
 		const currentDate = new Date();
 		const startDate = new Date();
-		startDate.setDate(currentDate.getDate() - 4); // Last 3 days
+		startDate.setDate(currentDate.getDate() - 7); // Last 3 days
 
 		const yearMonth = fns.format(currentDate, "yyyyMM");
 		const fbBulkCollection = await db.collection(yearMonth);
@@ -592,6 +602,201 @@ app.put("/mail/complete", authenticateToken, async (req, res) => {
 		}
 	} catch (error) {
 		res.status(500).json({ message: "Server error" });
+	}
+});
+
+app.post("/mail/insta2fa", authenticateToken, async (req, res) => {
+	try {
+		const body = req.body;
+		const { mail, pass, username, twoFA, mode } = body;
+		const user = req.user;
+
+		// console.log(body, "body");
+
+		if (!mail || !pass || !username || !twoFA) {
+			return res.status(400).json({ message: "Full Data are required" });
+		}
+
+		const db = await connectToDatabase();
+		const instagramCollection = await db.collection("instagram");
+
+		// 	const d = new Date()
+		// const da = d.setDate(d.getDate() - 2);
+
+		const date = fns.format(new Date(), "MM/dd/yyyy");
+
+		const result = await instagramCollection.insertOne({
+			...body,
+			userEmail: user.email,
+			createdAt: { date: new Date(), date_fns: date },
+		});
+
+		return res.status(201).json(result);
+	} catch (error) {
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+app.get("/api/instagram/table", authenticateToken, async (req, res) => {
+	try {
+		// const email = "1@gmail.com"; // Replace with req.user.email if needed
+		const { email } = req.user;
+		// console.log(email, "email");
+
+		const db = await connectToDatabase();
+		const currentDate = new Date();
+		const startDate = new Date();
+		startDate.setDate(currentDate.getDate() - 7); // Last 30 days (or customize)
+
+		// Format start and current date for comparison
+		const formattedStartDate = fns.format(startDate, "MM/dd/yyyy");
+		const formattedCurrentDate = fns.format(currentDate, "MM/dd/yyyy");
+
+		const instagramCollection = await db.collection("instagram");
+
+		// Aggregation to count both approved entries and total entries per day
+		const approvalHistory = await instagramCollection
+			.aggregate([
+				{
+					$match: {
+						"createdAt.date_fns": {
+							$gte: formattedStartDate,
+							$lte: formattedCurrentDate,
+						},
+						userEmail: email,
+					},
+				},
+				{
+					$group: {
+						_id: "$createdAt.date_fns", // Group by date
+						totalCount: { $sum: 1 }, // Count total records for the day
+						approvedCount: {
+							$sum: { $cond: [{ $eq: ["$approved", true] }, 1, 0] }, // Count only approved entries
+						},
+					},
+				},
+				{
+					$project: {
+						date: "$_id", // Date field
+						totalCount: 1, // Total record count for the day
+						approvedCount: 1,
+						_id: 0, // Exclude the MongoDB ID
+					},
+				},
+			])
+			.toArray();
+
+		// console.log(approvalHistory, "approval history");
+
+		// Sort the results by date (ascending order)
+		approvalHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+		res.status(200).json(approvalHistory); // Return the history table with total and approved counts
+	} catch (error) {
+		console.error("Error fetching Instagram approval history:", error);
+		res.status(500).json({ message: "Server error. Please try again later." });
+	}
+});
+
+app.put("/api/instagram/approved/:date", async (req, res) => {
+	const { date } = req.params;
+
+	const emails = req.body; // Expecting an array of emails
+	const formattedDate = fns.format(new Date(date), "MM/dd/yyyy");
+
+	try {
+		const db = await connectToDatabase();
+		const instagramCollection = await db.collection("instagram");
+
+		// Update the approved field for the specified emails
+		const result = await instagramCollection.updateMany(
+			{
+				"createdAt.date_fns": formattedDate, // Match the date in the 'createdAt.date_fns' field
+				mail: { $in: emails }, // Match documents where the email is in the provided array
+			},
+			{
+				$set: { approved: true }, // Set approved to true for matched documents
+			},
+		);
+		// Return the count of modified documents
+		res.status(200).send({ modifiedCount: result.modifiedCount });
+	} catch (err) {
+		console.error("Error updating approved status:", err);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+app.delete("/api/instagram/delete/:date", async (req, res) => {
+	const { date } = req.params;
+	const emails = req.body; // Expecting an array of emails
+	const formattedDate = fns.format(new Date(date), "MM/dd/yyyy");
+
+	try {
+		const db = await connectToDatabase();
+		const instagramCollection = await db.collection("instagram");
+
+		// Delete the specified documents for the emails and date
+		const result = await instagramCollection.deleteMany({
+			"createdAt.date_fns": formattedDate, // Match the date in the 'createdAt.date_fns' field
+			mail: { $in: emails }, // Match documents where the email is in the provided array
+		});
+
+		// Return the count of deleted documents
+		res.status(200).send({ deletedCount: result.deletedCount });
+	} catch (err) {
+		console.error("Error deleting Instagram records:", err);
+		res.status(500).json({ message: "Server error" });
+	}
+});
+
+app.get("/api/insta2fa/download/:date", async (req, res) => {
+	const { date } = req.params;
+	const finder = fns.format(new Date(date), "MM/dd/yyyy");
+
+	try {
+		const db = await connectToDatabase();
+		const instagramCollection = await db.collection("instagram");
+
+		// Query the database for records matching the formatted date
+		const data = await instagramCollection
+			.find({ "createdAt.date_fns": finder }) // Correct query format
+			.toArray();
+
+		// Map the data to a format suitable for Excel export
+		const excelData = data.map(entry => ({
+			Email: entry.mail || "",
+			Username: entry.username || "",
+			Password: entry.pass || "",
+			TwoFA: entry.twoFA || "",
+			UserEmail: entry.userEmail || "",
+		}));
+
+		// Create a new workbook and add the data as a sheet
+		const workbook = xlsx.utils.book_new();
+		const worksheet = xlsx.utils.json_to_sheet(excelData);
+		xlsx.utils.book_append_sheet(workbook, worksheet, "Data");
+
+		// Convert the workbook to a buffer
+		const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+		// Create a readable stream from the buffer
+		const stream = Readable.from(buffer);
+
+		// Set the headers to prompt a download in the browser
+		res.setHeader(
+			"Content-Disposition",
+			`attachment; filename="insta2fa_data_${date.replace(/\//g, "_")}.xlsx"`,
+		);
+		res.setHeader(
+			"Content-Type",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		);
+
+		// Pipe the buffer stream to the response
+		stream.pipe(res);
+	} catch (error) {
+		console.error("Error generating Excel file:", error);
+		res.status(500).send({ message: "Error generating Excel file." });
 	}
 });
 
